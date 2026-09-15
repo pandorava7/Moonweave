@@ -36,6 +36,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .song-heading input { width: min(420px, 100%); border: 0; color: #f4f5ff; background: transparent; font-size: 15px; font-weight: 600; text-align: center; }
 .song-heading span { display: block; margin-top: 3px; font: 500 9px "JetBrains Mono"; letter-spacing: .13em; color: var(--muted); text-transform: uppercase; }
 .top-actions { display: flex; align-items: center; gap: 8px; }
+.window-controls { display: flex; align-self: stretch; margin: 0 -24px 0 4px; -webkit-app-region: no-drag; }
+.window-control { width: 46px; border: 0; color: #b6bed2; background: transparent; cursor: pointer; display: grid; place-items: center; transition: background .16s ease, color .16s ease; }
+.window-control:hover { color: #f4f6ff; background: rgba(151, 164, 211, .16); }
+.window-control.close:hover { color: #fff; background: #df3159; }
 .icon-button { width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 9px; background: #111522; cursor: pointer; transition: .18s ease; }
 .icon-button:hover:not(:disabled) { border-color: rgba(40,215,255,.5); color: var(--cyan); transform: translateY(-1px); }
 .icon-button:disabled { opacity: .35; cursor: default; }
@@ -57,6 +61,15 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .tool-grid button.active { border-color: rgba(40,215,255,.65); color: var(--cyan); background: rgba(40,215,255,.08); box-shadow: inset 0 0 18px rgba(40,215,255,.05); }
 .tool-grid button.danger { grid-column: 1 / -1; height: 55px; flex-direction: row; }
 .tool-grid button.danger small { margin-left: 5px; }
+.region-select { width: 100%; min-height: 42px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border: 1px solid var(--line); border-radius: 8px; color: #aeb5c9; background: #111522; font-size: 11px; font-weight: 700; cursor: pointer; }
+.region-select.active, .region-actions button.active { border-color: var(--cyan); color: var(--cyan); background: rgba(40,215,255,.08); }
+.region-select small, .region-actions small { color: #687087; font-size: 8px; font-weight: 500; }
+.region-range { min-height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 4px; color: #9ca5bd; font: 600 9px "JetBrains Mono"; }
+.region-range span { color: var(--cyan); white-space: nowrap; }
+.region-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.region-actions button { min-height: 45px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 7px; color: #b8c0d2; background: #111522; font-size: 9px; cursor: pointer; }
+.region-actions button:disabled { opacity: .35; cursor: default; }
+.region-tools .hint { margin-bottom: 0; }
 .note-glyph { display: block; width: 30px; background: linear-gradient(90deg, var(--cyan), #baf5ff); border-radius: 3px; box-shadow: 0 0 9px rgba(40,215,255,.45); }
 .note-glyph.tap { height: 6px; }
 .note-glyph.hold { width: 12px; height: 28px; background: linear-gradient(var(--violet), #d6c2ff); box-shadow: 0 0 9px rgba(169,122,255,.4); }
@@ -92,6 +105,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .edit-lane { border-right: 1px solid rgba(118,128,158,.18); cursor: crosshair; transition: background .12s; }
 .edit-lane:hover { background: rgba(40,215,255,.045); }
 .edit-lane.lane-1, .edit-lane.lane-2 { background: rgba(169,122,255,.025); }
+.region-mode .edit-lane, .region-mode .editor-note { cursor: crosshair; }
+.region-overlay { position: absolute; z-index: 3; left: 0; right: 0; border-top: 2px solid var(--cyan); border-bottom: 2px solid var(--cyan); background: rgba(40,215,255,.1); pointer-events: none; }
 .beat-layer { position: absolute; z-index: 1; inset: 34px 0 0; pointer-events: none; }
 .beat-line { height: 1px; position: absolute; left: 0; right: 0; background: rgba(100,115,151,.46); }
 .beat-line span { position: absolute; right: 7px; top: -11px; color: #697188; font: 500 8px "JetBrains Mono"; }
@@ -150,6 +165,18 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 
 .modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; background: rgba(2,3,8,.74); backdrop-filter: blur(8px); animation: fade-in .15s; }
 .settings-modal { width: 520px; padding: 25px; border: 1px solid #343a52; border-radius: 15px; background: linear-gradient(160deg, #141827, #0d101b); box-shadow: 0 30px 80px #000; }
+.playtest-start-dialog p { margin: 0; color: #8790a6; font-size: 11px; line-height: 1.6; }
+.playtest-start-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 22px; }
+.playtest-start-option { min-height: 78px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 7px; padding: 16px; border-radius: 10px; cursor: pointer; transition: border-color .16s ease, background .16s ease, box-shadow .16s ease, transform .16s ease; }
+.playtest-start-option span { font-size: 12px; font-weight: 800; }
+.playtest-start-option small { font: 600 10px "JetBrains Mono"; }
+.playtest-start-option.restart { border: 1px solid #39435c; color: #e6ecfb; background: linear-gradient(145deg, #1a2031, #111622); box-shadow: inset 0 1px 0 rgba(255,255,255,.035); }
+.playtest-start-option.restart small { color: #7f8aa2; }
+.playtest-start-option.resume { border: 1px solid rgba(119,232,255,.78); color: #03141c; background: linear-gradient(135deg, #25b9e2, #78e5ff); box-shadow: 0 8px 24px rgba(40,215,255,.2), inset 0 1px 0 rgba(255,255,255,.45); }
+.playtest-start-option.resume small { color: #0a5266; }
+.playtest-start-option:hover { transform: translateY(-2px); }
+.playtest-start-option.restart:hover { border-color: #74819e; background: linear-gradient(145deg, #222b40, #151c2a); box-shadow: 0 8px 20px rgba(0,0,0,.25); }
+.playtest-start-option.resume:hover { border-color: #d2f9ff; background: linear-gradient(135deg, #4ad2f1, #a0efff); box-shadow: 0 10px 28px rgba(40,215,255,.3); }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
 .modal-head span { color: var(--cyan); font: 700 8px "JetBrains Mono"; letter-spacing: .16em; }
 .modal-head h2 { margin: 5px 0 0; font-size: 21px; }
@@ -177,43 +204,96 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .play-head b, .play-head span { display: block; }
 .play-head b { font-size: 14px; }
 .play-head span { margin-top: 4px; color: #5f687c; font: 600 8px "JetBrains Mono"; letter-spacing: .14em; }
-.game-area { height: calc(100% - 66px); position: relative; display: grid; place-items: center; overflow: hidden; }
-.game-stats { position: absolute; z-index: 5; left: 28px; top: 25px; }
+.game-area { height: 100%; position: relative; display: grid; place-items: center; margin-top: -66px; overflow: hidden; }
+.game-stats { position: absolute; z-index: 5; left: 28px; top: 91px; display: grid; gap: 20px; }
 .game-stats span, .game-stats b { display: block; }
 .game-stats span { color: #6e778c; font: 700 8px "JetBrains Mono"; letter-spacing: .18em; }
-.game-stats b { margin-top: 6px; font: 700 20px "JetBrains Mono"; }
-.game-lanes { width: min(580px, 47vw); height: calc(100% + 40px); position: relative; display: grid; grid-template-columns: repeat(4, 1fr); overflow: hidden; border-left: 1px solid rgba(142,157,202,.25); border-right: 1px solid rgba(142,157,202,.25); background: rgba(7,9,17,.78); box-shadow: 0 0 90px rgba(45,75,165,.15); transform-origin: 50% 100%; }
-.game-beat-grid { position: absolute; z-index: 1; inset: 0; pointer-events: none; opacity: .18; background-image: linear-gradient(180deg, rgba(215,229,255,.75) 0 1px, transparent 1px); background-size: 100% var(--beat-size); background-position-y: var(--beat-offset); }
-.game-lane { position: relative; border-right: 1px solid rgba(122,138,179,.17); transition: background .07s; }
-.game-lane.lane-1, .game-lane.lane-2 { background: rgba(169,122,255,.035); }
-.game-lane::after { content: ""; position: absolute; inset: 0; opacity: 0; background: linear-gradient(transparent 10%, rgba(40,215,255,.08), rgba(40,215,255,.45)); transition: opacity .06s; }
-.game-lane.lane-1::after, .game-lane.lane-2::after { background: linear-gradient(transparent 10%, rgba(169,122,255,.08), rgba(169,122,255,.46)); }
-.game-lane.pressed::after { opacity: 1; }
-.game-lane.hit-flash::before { content: ""; position: absolute; z-index: 6; left: -12%; right: -12%; bottom: 4.5%; height: 120px; border-radius: 50%; background: radial-gradient(ellipse, #fff 0 8%, var(--cyan) 16%, rgba(104,116,255,.75) 34%, transparent 70%); filter: blur(2px); mix-blend-mode: screen; animation: hit .3s ease-out; }
-.game-lane.holding::before { content: ""; position: absolute; z-index: 6; left: -6%; right: -6%; bottom: 5.5%; height: 96px; border-radius: 50%; background: radial-gradient(ellipse, #fff 0 6%, var(--cyan) 14%, rgba(83,103,255,.5) 34%, transparent 68%); filter: blur(2px); mix-blend-mode: screen; animation: hold-pulse .72s ease-in-out infinite alternate; }
+.game-stats b { margin-top: 6px; font: 700 20px "JetBrains Mono"; font-variant-numeric: tabular-nums; }
+.game-lanes { width: 80vw; height: 100%; position: absolute; bottom: 0; overflow: visible; }
+.game-track { width: 100%; height: 100%; position: absolute; z-index: 0; inset: 0; overflow: visible; filter: drop-shadow(0 0 45px rgba(45,75,165,.2)); }
+.game-track-lane { fill: rgba(7,9,17,.86); stroke: rgba(122,138,179,.25); stroke-width: 1; transition: fill .07s; }
+.game-track-lane.lane-1, .game-track-lane.lane-2 { fill: rgba(18,15,32,.9); }
+.game-lane-glow { filter: url("#lane-glow-blur"); pointer-events: none; }
+.game-beat-line { stroke: rgba(215,229,255,.16); stroke-width: 1px; }
+.hold-effect { width: 190px; height: 190px; position: absolute; z-index: 6; left: 50%; background-repeat: no-repeat; background-size: 400% 400%; filter: drop-shadow(0 0 9px rgba(173,228,255,.72)); mix-blend-mode: screen; pointer-events: none; transform: translate(-50%, -50%); will-change: background-position, opacity, transform; animation: hold-sprite-frames .48s step-end infinite, hold-sprite-breathe .48s ease-in-out infinite alternate; }
+.hold-effect.light { background-image: url("/assets/particle/note_mirai_light.png"); }
+.hold-effect.conflict { background-image: url("/assets/particle/note_light.png"); }
 .key-cap { position: absolute; z-index: 8; left: 50%; bottom: 2.5%; transform: translateX(-50%); width: 33px; height: 25px; display: grid; place-items: center; border: 1px solid rgba(211,222,255,.3); border-radius: 5px; color: #9ba5bc; background: rgba(15,19,31,.75); font: 700 10px "JetBrains Mono"; }
-.game-note { width: 21%; position: absolute; z-index: 4; border: 1px solid #fff; border-radius: 4px; background: linear-gradient(180deg, #effdff, var(--lane) 38%, color-mix(in srgb, var(--lane), #07101a 30%)); box-shadow: 0 0 17px color-mix(in srgb, var(--lane), transparent 28%), inset 0 2px 0 white; }
-.game-note i { position: absolute; inset: 4px 12px; border-top: 1px solid rgba(255,255,255,.7); }
-.game-note.hold { border-radius: 5px; background: linear-gradient(90deg, color-mix(in srgb, var(--lane), #0b1020 68%), color-mix(in srgb, var(--lane), white 5%), color-mix(in srgb, var(--lane), #0b1020 68%)); border-top: 11px solid var(--lane); border-bottom: 11px solid var(--lane); opacity: .9; }
-.game-note.hold.active-hold { border-bottom-color: #fff; box-shadow: 0 0 24px var(--lane), inset 0 0 16px color-mix(in srgb, var(--lane), transparent 30%); }
-.game-judgment-line { height: 4px; position: absolute; z-index: 5; left: 0; right: 0; top: 86%; background: #fff; box-shadow: 0 0 8px white, 0 0 30px var(--cyan); }
-.judge-text { min-width: 190px; position: absolute; z-index: 20; top: 55%; left: 50%; transform: translateX(-50%); padding: 7px 18px; border-radius: 50%; font-size: 34px; font-weight: 800; font-style: italic; letter-spacing: .05em; text-align: center; text-shadow: 0 0 8px #fff, 0 0 24px currentColor, 0 0 46px currentColor; filter: drop-shadow(0 5px 12px #000); animation: judge .42s ease-out; pointer-events: none; }
-.judge-text span { display: block; margin-top: 5px; font: 700 10px "JetBrains Mono"; text-align: center; letter-spacing: .15em; }
+.game-notes { width: 100%; height: 100%; position: absolute; z-index: 4; inset: 0; overflow: visible; pointer-events: none; }
+.game-note-shape { fill: var(--lane); stroke: #fff; stroke-width: 1.4px; filter: drop-shadow(0 0 7px var(--lane)); }
+.game-note-shape.hold { fill: color-mix(in srgb, var(--lane), #0b1020 48%); stroke: var(--lane); stroke-width: 8px; opacity: .9; }
+.game-note-shape.hold.active-hold { fill: color-mix(in srgb, var(--lane), #fff 24%); stroke: color-mix(in srgb, var(--lane), #fff 58%); stroke-width: 2px; opacity: 1; filter: drop-shadow(0 0 14px var(--lane)); }
+.game-judgment-line { height: 4px; position: absolute; z-index: 5; left: 0; right: 0; background: #fff; box-shadow: 0 0 7px #fff, 0 0 20px var(--cyan); pointer-events: none; }
+.hit-effect { width: 1px; height: 1px; position: absolute; z-index: 7; pointer-events: none; mix-blend-mode: screen; }
+.hit-sprite { width: 440px; height: 440px; position: absolute; left: 50%; top: 50%; background-repeat: no-repeat; background-size: 400% 400%; transform: translate(-50%, -50%); will-change: background-position, opacity, transform; animation: hit-sprite-frames .48s step-end forwards, hit-sprite-motion .48s ease-out forwards; }
+.hit-effect.light .hit-sprite { background-image: url("/assets/particle/note_mirai_light.png"); }
+.hit-effect.conflict .hit-sprite { background-image: url("/assets/particle/note_light.png"); }
+.hit-effect.good { opacity: .72; }
+.hit-effect.good .hit-sprite { width: 380px; height: 380px; animation-duration: .4s; }
+.hit-effect.miss { opacity: .52; mix-blend-mode: normal; }
+.hit-effect.miss .hit-sprite { width: 300px; height: 300px; background-image: url("/assets/particle/challenge_white.png"); filter: sepia(1) saturate(6) hue-rotate(294deg); animation-duration: .36s; }
+.judge-text { min-width: 150px; position: absolute; z-index: 20; margin-top: -95px; transform: translate(-50%, -100%); padding: 7px 12px; font-size: 30px; font-weight: 800; font-style: italic; letter-spacing: .05em; text-align: center; text-shadow: 0 0 8px #fff, 0 0 24px currentColor, 0 0 46px currentColor; filter: drop-shadow(0 5px 12px #000); animation: judge .52s ease-out forwards; pointer-events: none; white-space: nowrap; }
 .judge-text.perfect { color: #76e9ff; }
 .judge-text.good { color: #b991ff; }
 .judge-text.miss { color: #ff648d; }
+.game-combo { position: absolute; z-index: 19; top: 55%; left: 50%; transform: translate(-50%, -50%); color: #f5fbff; text-align: center; text-shadow: 0 0 10px #fff, 0 0 28px var(--cyan); pointer-events: none; animation: combo-pop .24s ease-out; }
+.game-combo b { display: block; font: 800 48px "JetBrains Mono"; line-height: 1; font-variant-numeric: tabular-nums; }
+.game-combo span { display: block; margin-top: 7px; color: #a3edff; font: 800 13px "JetBrains Mono"; letter-spacing: .2em; }
 .game-pause { position: absolute; z-index: 15; display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 20px 30px; border: 1px solid rgba(189,205,255,.2); border-radius: 14px; color: #f0f7ff; background: rgba(10,13,23,.9); backdrop-filter: blur(8px); box-shadow: 0 15px 50px #000; cursor: pointer; }
 .game-pause svg { color: var(--cyan); }
 .game-pause span { color: #667087; font: 700 8px "JetBrains Mono"; }
+.playtest-countdown { position: absolute; z-index: 15; display: grid; place-items: center; min-width: 126px; padding: 18px 28px; border: 1px solid rgba(98,223,255,.35); border-radius: 50%; color: #f4fbff; background: rgba(8,14,27,.88); box-shadow: 0 0 42px rgba(40,215,255,.18); backdrop-filter: blur(8px); }
+.playtest-countdown span, .playtest-countdown small { color: #8fa0bb; font: 700 9px "JetBrains Mono"; letter-spacing: .14em; }
+.playtest-countdown b { margin: 5px 0; color: var(--cyan); font: 800 30px "JetBrains Mono"; letter-spacing: .08em; line-height: 1; text-shadow: 0 0 20px rgba(40,215,255,.65); }
 .game-progress { height: 2px; position: absolute; z-index: 12; left: 0; right: 0; bottom: 0; background: #171b27; }
 .game-progress i { height: 100%; display: block; background: linear-gradient(90deg, var(--violet), var(--cyan)); box-shadow: 0 0 10px var(--cyan); }
 
 @keyframes pulse { 50% { opacity: .45; } }
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
-@keyframes hit { from { opacity: 1; transform: scale(.4); } to { opacity: 0; transform: scale(1.4); } }
-@keyframes hold-pulse { from { opacity: .58; transform: scale(.88); } to { opacity: 1; transform: scale(1.12); } }
-@keyframes judge { from { opacity: 0; transform: translate(-50%, 12px) scale(.88); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+@keyframes hit-sprite-frames {
+  0%, 6.24% { background-position: 0 0; }
+  6.25%, 12.49% { background-position: 33.333% 0; }
+  12.5%, 18.74% { background-position: 66.667% 0; }
+  18.75%, 24.99% { background-position: 100% 0; }
+  25%, 31.24% { background-position: 0 33.333%; }
+  31.25%, 37.49% { background-position: 33.333% 33.333%; }
+  37.5%, 43.74% { background-position: 66.667% 33.333%; }
+  43.75%, 49.99% { background-position: 100% 33.333%; }
+  50%, 56.24% { background-position: 0 66.667%; }
+  56.25%, 62.49% { background-position: 33.333% 66.667%; }
+  62.5%, 68.74% { background-position: 66.667% 66.667%; }
+  68.75%, 74.99% { background-position: 100% 66.667%; }
+  75%, 81.24% { background-position: 0 100%; }
+  81.25%, 87.49% { background-position: 33.333% 100%; }
+  87.5%, 93.74% { background-position: 66.667% 100%; }
+  93.75%, 100% { background-position: 100% 100%; }
+}
+@keyframes hit-sprite-motion { 0% { opacity: 0; transform: translate(-50%, -50%) scale(.72); } 12% { opacity: 1; } 74% { opacity: .92; transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -50%) scale(1.04); } }
+@keyframes hold-sprite-frames {
+  0%, 8.32% { background-position: 0 33.333%; }
+  8.33%, 16.65% { background-position: 33.333% 33.333%; }
+  16.66%, 24.99% { background-position: 66.667% 33.333%; }
+  25%, 33.32% { background-position: 100% 33.333%; }
+  33.33%, 41.65% { background-position: 0 66.667%; }
+  41.66%, 49.99% { background-position: 33.333% 66.667%; }
+  50%, 58.32% { background-position: 66.667% 66.667%; }
+  58.33%, 66.65% { background-position: 100% 66.667%; }
+  66.66%, 74.99% { background-position: 0 100%; }
+  75%, 83.32% { background-position: 33.333% 100%; }
+  83.33%, 91.65% { background-position: 66.667% 100%; }
+  91.66%, 100% { background-position: 100% 100%; }
+}
+@keyframes hold-sprite-breathe { from { opacity: .62; transform: translate(-50%, -50%) scale(.92); } to { opacity: .92; transform: translate(-50%, -50%) scale(1.04); } }
+@keyframes judge { from { opacity: 0; transform: translate(-50%, calc(-100% + 28px)) scale(.88); } 35% { opacity: 1; } to { opacity: 0; transform: translate(-50%, calc(-100% - 10px)) scale(1); } }
+@keyframes combo-pop { from { opacity: .5; transform: translate(-50%, -50%) scale(1.3); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .hit-sprite { animation-duration: .12s; }
+  .judge-text { animation: none; }
+  .game-combo { animation: none; }
+  .hold-effect { opacity: .72; background-position: 33.333% 66.667%; transform: translate(-50%, -50%); animation: none; }
+}
 
 @media (max-width: 1220px) {
   .workspace { grid-template-columns: 230px 60px minmax(500px, 1fr) 240px; }

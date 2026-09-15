@@ -1,15 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, ChevronDown, CirclePlay, Download, FolderOpen, Gauge, Music2,
-  Pause, Play, Redo2, RotateCcw, Save, Settings2, SlidersHorizontal, Sparkles,
-  Trash2, Undo2, Upload, X,
+  ArrowLeft, ChevronDown, CirclePlay, Copy, Download, FlipHorizontal2, FolderOpen, Gauge, Music2,
+  Minus, Pause, Play, Redo2, RotateCcw, Save, Settings2, SlidersHorizontal, Sparkles, Square,
+  Trash2, Undo2, Upload, ClipboardPaste, X,
 } from 'lucide-react'
 import type { Chart, ChartNote, ToolMode } from './types'
 import { Badge, Button, Dialog, DialogContent, Input, Select, Slider } from './components/ui'
+import { accuracyFromUnits, countNoteTicks, judgmentUnits, scoreFromUnits, type Judgment } from './scoring'
 
 const SUBDIVISIONS = [2, 3, 4, 6, 8, 12, 16, 24, 32] as const
 const PLAYBACK_RATES = [0.5, 0.75, 1] as const
 const LANE_COLORS = ['#31d7ff', '#b788ff', '#b788ff', '#31d7ff']
+const HIT_EFFECT_TEXTURES = [
+  '/assets/particle/note_mirai_light.png',
+  '/assets/particle/note_light.png',
+  '/assets/particle/challenge_white.png',
+]
 const BPM_THRESHOLD = { min: 20, max: 400 }
 
 const DEFAULT_CHART: Chart = {
@@ -22,11 +28,13 @@ const DEFAULT_CHART: Chart = {
   offset: 0,
   duration: 120000,
   notes: [],
-  settings: { laneTilt: 0, scrollSpeed: 7, editorZoom: 230, timingWindow: 'standard', keys: ['F', 'G', 'H', 'J'] },
+  settings: { laneTilt: 0, scrollSpeed: 7, editorZoom: 230, timingWindow: 'standard', keys: ['D', 'F', 'J', 'K'] },
 }
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v))
+const notesInRegion = (notes: ChartNote[], start: number, end: number) =>
+  notes.filter(note => note.time >= start && (note.endTime ?? note.time) <= end)
 const formatTime = (ms: number) => {
   const total = Math.max(0, ms) / 1000
   const min = Math.floor(total / 60)
@@ -48,10 +56,14 @@ function App() {
   const [tool, setTool] = useState<ToolMode>('note')
   const [holdStart, setHoldStart] = useState<{ lane: number; time: number } | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [region, setRegion] = useState<{ start: number; end: number | null } | null>(null)
+  const [copiedRegion, setCopiedRegion] = useState<{ start: number; notes: ChartNote[] } | null>(null)
   const [history, setHistory] = useState<ChartNote[][]>([])
   const [future, setFuture] = useState<ChartNote[][]>([])
   const [view, setView] = useState<'editor' | 'play'>('editor')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [playtestStartOpen, setPlaytestStartOpen] = useState(false)
+  const [playtestStartTime, setPlaytestStartTime] = useState(0)
   const [chartPath, setChartPath] = useState('')
   const [audioUrl, setAudioUrl] = useState('')
   const [toast, setToast] = useState('')
@@ -76,6 +88,51 @@ function App() {
       return { ...prev, notes: next.sort((a, b) => a.time - b.time) }
     })
   }, [])
+
+  const chooseRegionLine = (time: number) => {
+    if (!region || region.end !== null) {
+      setRegion({ start: time, end: null })
+      setSelectedIds(new Set())
+      return
+    }
+    const start = Math.min(region.start, time)
+    const end = Math.max(region.start, time)
+    setRegion({ start, end })
+    setSelectedIds(new Set(notesInRegion(chart.notes, start, end).map(note => note.id)))
+  }
+
+  const regionNotes = region?.end === null || !region ? [] : notesInRegion(chart.notes, region.start, region.end)
+
+  const copyRegion = () => {
+    if (!region || region.end === null || !regionNotes.length) return
+    setCopiedRegion({ start: region.start, notes: regionNotes.map(note => ({ ...note })) })
+    showToast(`已复制 ${regionNotes.length} 个音符；选择粘贴并点击目标节拍线`)
+  }
+
+  const pasteRegion = (time: number) => {
+    if (!copiedRegion?.notes.length) return
+    const delta = time - copiedRegion.start
+    if (copiedRegion.notes.some(note => note.time + delta < 0 || (note.endTime ?? note.time) + delta > chart.duration)) {
+      showToast('目标位置超出谱面时长，无法粘贴完整区域')
+      return
+    }
+    const pasted = copiedRegion.notes.map(note => ({
+      ...note, id: uid(), time: note.time + delta,
+      endTime: note.endTime === undefined ? undefined : note.endTime + delta,
+    }))
+    commitNotes([...chart.notes, ...pasted])
+    setSelectedIds(new Set(pasted.map(note => note.id)))
+    setRegion(null)
+    setTool('region')
+    showToast(`已粘贴 ${pasted.length} 个音符`)
+  }
+
+  const mirrorRegion = () => {
+    if (!regionNotes.length) return
+    const ids = new Set(regionNotes.map(note => note.id))
+    commitNotes(chart.notes.map(note => ids.has(note.id) ? { ...note, lane: 3 - note.lane } : note))
+    showToast(`已镜像 ${ids.size} 个音符`)
+  }
 
   const undo = () => {
     if (!history.length) return
@@ -130,6 +187,20 @@ function App() {
     const value = clamp(time, 0, chart.duration)
     setCurrentTime(value)
     if (audioRef.current) audioRef.current.currentTime = value / 1000
+  }
+
+  const openPlaytestStart = () => {
+    if (!audioUrl) { showToast('请先选择歌曲音频'); return }
+    audioRef.current?.pause()
+    editorPlayingRef.current = false
+    setIsPlaying(false)
+    setPlaytestStartOpen(true)
+  }
+
+  const startPlaytest = (time: number) => {
+    setPlaytestStartOpen(false)
+    setPlaytestStartTime(clamp(time, 0, chart.duration))
+    setView('play')
   }
 
   const applyOffset = (value: number) => {
@@ -194,9 +265,14 @@ function App() {
     const loaded = { ...DEFAULT_CHART, ...result.chart, settings: { ...DEFAULT_CHART.settings, ...result.chart.settings } }
     setChart(loaded)
     setChartPath(result.path)
-    setHistory([]); setFuture([]); setSelectedIds(new Set()); setCurrentTime(0)
-    if (loaded.audioPath) setAudioUrl(`moon-audio://local/${encodeURIComponent(loaded.audioPath)}`)
-    showToast('谱面已载入')
+    setHistory([]); setFuture([]); setSelectedIds(new Set()); setRegion(null); setCopiedRegion(null); setTool('note'); setCurrentTime(0)
+    if (loaded.audioPath && result.audioAvailable) {
+      setAudioUrl(`moon-audio://local/${encodeURIComponent(loaded.audioPath)}`)
+      showToast('谱面已载入，已索引原音频文件')
+    } else {
+      setAudioUrl('')
+      showToast(loaded.audioPath ? `谱面已载入，但找不到音频「${loaded.audioName || loaded.audioPath}」，请重新选择` : '谱面已载入（未关联音频）')
+    }
   }
 
   useEffect(() => () => stopAnimation(), [stopAnimation])
@@ -208,10 +284,21 @@ function App() {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); saveChart() }
       const target = event.target as HTMLElement
       const editing = target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement || target.isContentEditable
-      if (view === 'editor' && !editing) {
+      if (view === 'editor' && !settingsOpen && !playtestStartOpen && !editing) {
         if (event.repeat) return
         const beat = 60000 / chart.bpm
         const step = beat / subdivision
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+          event.preventDefault()
+          setRegion(null)
+          setSelectedIds(new Set(chart.notes.map(note => note.id)))
+        }
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && region?.end != null) { event.preventDefault(); copyRegion() }
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v' && copiedRegion) {
+          event.preventDefault()
+          const snapped = Math.round((currentTime - chart.offset) / step) * step + chart.offset
+          pasteRegion(clamp(snapped, 0, chart.duration))
+        }
         if (event.code === 'KeyQ') { event.preventDefault(); togglePlay() }
         if (event.code === 'Delete' && selectedIds.size) {
           event.preventDefault(); commitNotes(chart.notes.filter(note => !selectedIds.has(note.id))); setSelectedIds(new Set()); setTool('note')
@@ -230,6 +317,10 @@ function App() {
       <audio ref={audioRef} src={audioUrl || undefined} onLoadedMetadata={e => {
         const duration = e.currentTarget.duration * 1000
         if (Number.isFinite(duration)) setChart(c => ({ ...c, duration }))
+      }} onError={() => {
+        if (!audioUrl) return
+        setAudioUrl('')
+        showToast('索引的音频文件已不可用，请重新选择文件')
       }} onEnded={() => { editorPlayingRef.current = false; setIsPlaying(false); setCurrentTime(chart.duration); stopAnimation() }} />
       <Input ref={audioInputRef} className="sr-only" type="file" accept="audio/*,.flac,.m4a" onChange={event => {
         const file = event.target.files?.[0]; if (!file) return
@@ -239,7 +330,13 @@ function App() {
       }} />
       <Input ref={chartInputRef} className="sr-only" type="file" accept="application/json,.json" onChange={async event => {
         const file = event.target.files?.[0]; if (!file) return
-        try { const value = JSON.parse(await file.text()); setChart({ ...DEFAULT_CHART, ...value, settings: { ...DEFAULT_CHART.settings, ...value.settings } }); setHistory([]); setFuture([]); setSelectedIds(new Set()); setCurrentTime(0); showToast('谱面已载入') }
+        try {
+          const value = JSON.parse(await file.text())
+          setChart({ ...DEFAULT_CHART, ...value, settings: { ...DEFAULT_CHART.settings, ...value.settings } })
+          setAudioUrl('')
+          setHistory([]); setFuture([]); setSelectedIds(new Set()); setRegion(null); setCopiedRegion(null); setTool('note'); setCurrentTime(0)
+          showToast(value.audioPath ? '谱面已载入；浏览器模式无法访问本地音频索引，请重新选择文件' : '谱面已载入')
+        }
         catch { showToast('谱面文件格式无效') }
         event.target.value = ''
       }} />
@@ -255,7 +352,12 @@ function App() {
             <div className="top-actions">
               <IconButton label="打开谱面" onClick={loadChart}><FolderOpen size={18} /></IconButton>
               <IconButton label="保存谱面" onClick={saveChart}><Save size={18} /></IconButton>
-              <Button className="playtest-button" onClick={() => { if (!audioUrl) showToast('请先选择歌曲音频'); else { audioRef.current?.pause(); editorPlayingRef.current = false; setIsPlaying(false); setView('play'); seek(0) } }}><CirclePlay size={18} /> 谱面试玩</Button>
+              <Button className="playtest-button" onClick={openPlaytestStart}><CirclePlay size={18} /> 谱面试玩</Button>
+              <div className="window-controls" aria-label="窗口控制">
+                <button className="window-control" aria-label="最小化" title="最小化" onClick={() => window.moonweave?.minimizeWindow()}><Minus size={17} /></button>
+                <button className="window-control" aria-label="最大化或还原" title="最大化或还原" onClick={() => window.moonweave?.toggleMaximizeWindow()}><Square size={14} /></button>
+                <button className="window-control close" aria-label="关闭" title="关闭" onClick={() => window.moonweave?.closeWindow()}><X size={17} /></button>
+              </div>
             </div>
           </header>
 
@@ -264,13 +366,24 @@ function App() {
               <section>
                 <label className="section-label">谱面工具</label>
                 <div className="tool-grid">
-                  <Button variant="outline" className={tool === 'note' ? 'active' : ''} onClick={() => { setTool('note'); setHoldStart(null); setSelectedIds(new Set()) }}><span className="note-glyph tap" />NOTE<small>单击放置</small></Button>
-                  <Button variant="outline" className={tool === 'hold' ? 'active' : ''} onClick={() => { setTool('hold'); setSelectedIds(new Set()) }}><span className="note-glyph hold" />HOLD<small>{holdStart ? '选择终点' : '两次点击'}</small></Button>
+                  <Button variant="outline" className={tool === 'note' ? 'active' : ''} onClick={() => { setTool('note'); setHoldStart(null); setSelectedIds(new Set()); setRegion(null) }}><span className="note-glyph tap" />NOTE<small>单击放置</small></Button>
+                  <Button variant="outline" className={tool === 'hold' ? 'active' : ''} onClick={() => { setTool('hold'); setSelectedIds(new Set()); setRegion(null) }}><span className="note-glyph hold" />HOLD<small>{holdStart ? '选择终点' : '两次点击'}</small></Button>
                   <Button variant="destructive" className={tool === 'delete' ? 'active danger' : 'danger'} onClick={() => {
                     if (selectedIds.size) { commitNotes(chart.notes.filter(note => !selectedIds.has(note.id))); setSelectedIds(new Set()); setTool('note') }
                     else { setTool('delete'); setHoldStart(null) }
                   }}><Trash2 size={20} />删除<small>{selectedIds.size ? `删除 ${selectedIds.size} 个` : '点击移除'}</small></Button>
                 </div>
+              </section>
+              <section className="region-tools">
+                <label className="section-label">区域操作</label>
+                <Button variant="outline" className={tool === 'region' ? 'region-select active' : 'region-select'} onClick={() => { setTool('region'); setHoldStart(null); setSelectedIds(new Set()); setRegion(null) }}>选择区域<small>依次点击起点与终点节拍线</small></Button>
+                <div className="region-range">{region ? `${formatTime(region.start)} → ${region.end === null ? '选择终点' : formatTime(region.end)}` : '尚未选择区域'}{region?.end !== null && region ? <span>{regionNotes.length} 个音符</span> : null}</div>
+                <div className="region-actions">
+                  <Button variant="outline" disabled={!regionNotes.length} onClick={copyRegion}><Copy size={15} />复制</Button>
+                  <Button variant="outline" disabled={!copiedRegion?.notes.length} className={tool === 'paste' ? 'active' : ''} onClick={() => setTool('paste')}><ClipboardPaste size={15} />粘贴<small>点击目标拍线</small></Button>
+                  <Button variant="outline" disabled={!regionNotes.length} onClick={mirrorRegion}><FlipHorizontal2 size={15} />镜像</Button>
+                </div>
+                <p className="hint">完整落在区域内的 Note / Hold 会被选中。镜像仅交换轨道位置。</p>
               </section>
               <section>
                 <label className="section-label">吸附精度</label>
@@ -311,9 +424,11 @@ function App() {
               <div><kbd>⇧ Z</kbd><span>重做</span></div>
               <div><kbd>⌃ S</kbd><span>保存</span></div>
               <div><kbd>Del</kbd><span>删除<br />选中</span></div>
+              <div><kbd>⌃ C</kbd><span>复制<br />区域</span></div>
+              <div><kbd>⌃ V</kbd><span>粘贴<br />当前拍线</span></div>
             </aside>
 
-            <Editor chart={chart} currentTime={currentTime} subdivision={subdivision} tool={tool} holdStart={holdStart} selectedIds={selectedIds} zoom={chart.settings.editorZoom} isPlaying={isPlaying} onSeek={seek} onNotesChange={commitNotes} onHoldStart={setHoldStart} onSelectionChange={setSelectedIds} onZoomChange={editorZoom => setChart(c => ({ ...c, settings: { ...c.settings, editorZoom } }))} />
+            <Editor chart={chart} currentTime={currentTime} subdivision={subdivision} tool={tool} holdStart={holdStart} selectedIds={selectedIds} region={region} zoom={chart.settings.editorZoom} isPlaying={isPlaying} onSeek={seek} onNotesChange={commitNotes} onHoldStart={setHoldStart} onSelectionChange={setSelectedIds} onRegionLine={chooseRegionLine} onPasteLine={pasteRegion} onZoomChange={editorZoom => setChart(c => ({ ...c, settings: { ...c.settings, editorZoom } }))} />
 
             <aside className="right-panel panel">
               <section className="inspector-head"><div><label className="section-label">编辑器状态</label><b>{isPlaying ? '实时制谱' : '已暂停'}</b></div><Badge className={isPlaying ? 'status live' : 'status'}>{isPlaying ? 'PLAY' : 'READY'}</Badge></section>
@@ -339,21 +454,22 @@ function App() {
           </footer>
         </>
       ) : (
-        <Playtest chart={chart} audio={audioRef.current} audioUrl={audioUrl} onExit={() => { audioRef.current?.pause(); editorPlayingRef.current = false; setView('editor'); setIsPlaying(false); seek(0) }} />
+        <Playtest chart={chart} audio={audioRef.current} audioUrl={audioUrl} initialTime={playtestStartTime} onExit={() => { audioRef.current?.pause(); editorPlayingRef.current = false; setView('editor'); setIsPlaying(false); seek(playtestStartTime) }} />
       )}
 
       {settingsOpen && <SettingsModal chart={chart} onChange={setChart} onClose={() => setSettingsOpen(false)} />}
+      <PlaytestStartDialog open={playtestStartOpen} currentTime={currentTime} onClose={() => setPlaytestStartOpen(false)} onStart={startPlaytest} />
       {toast && <div className="toast">{toast}</div>}
     </div>
   )
 }
 
 interface EditorProps {
-  chart: Chart; currentTime: number; subdivision: number; tool: ToolMode; holdStart: { lane: number; time: number } | null; selectedIds: Set<string>; zoom: number; isPlaying: boolean
-  onSeek(time: number): void; onNotesChange(notes: ChartNote[]): void; onHoldStart(value: { lane: number; time: number } | null): void; onSelectionChange(ids: Set<string>): void; onZoomChange(value: number): void
+  chart: Chart; currentTime: number; subdivision: number; tool: ToolMode; holdStart: { lane: number; time: number } | null; selectedIds: Set<string>; region: { start: number; end: number | null } | null; zoom: number; isPlaying: boolean
+  onSeek(time: number): void; onNotesChange(notes: ChartNote[]): void; onHoldStart(value: { lane: number; time: number } | null): void; onSelectionChange(ids: Set<string>): void; onRegionLine(time: number): void; onPasteLine(time: number): void; onZoomChange(value: number): void
 }
 
-function Editor({ chart, currentTime, subdivision, tool, holdStart, selectedIds, zoom, isPlaying, onSeek, onNotesChange, onHoldStart, onSelectionChange, onZoomChange }: EditorProps) {
+function Editor({ chart, currentTime, subdivision, tool, holdStart, selectedIds, region, zoom, isPlaying, onSeek, onNotesChange, onHoldStart, onSelectionChange, onRegionLine, onPasteLine, onZoomChange }: EditorProps) {
   const laneRef = useRef<HTMLDivElement>(null)
   const [laneHeight, setLaneHeight] = useState(700)
   const [dragPreview, setDragPreview] = useState<Record<string, { lane: number; time: number; endTime?: number }>>({})
@@ -383,10 +499,28 @@ function Editor({ chart, currentTime, subdivision, tool, holdStart, selectedIds,
   }
 
   const laneClick = (event: React.MouseEvent, lane: number) => {
-    if (selectedIds.size) { onSelectionChange(new Set()); return }
     const time = pointerTime(event.clientY)
+    if (tool === 'region') { onRegionLine(time); return }
+    if (tool === 'paste') { onPasteLine(time); return }
     if (tool === 'delete') return
-    if (tool === 'note') onNotesChange([...chart.notes, { id: uid(), lane, time, kind: 'note' }])
+    const beatIndex = Math.round((time - chart.offset) / step)
+    const noteOnBeat = chart.notes.find(note => note.lane === lane && Math.round((note.time - chart.offset) / step) === beatIndex)
+
+    // Treat the full snapped beat cell as the note's selection target. This lets
+    // users select a note from anywhere in its lane around the nearest beat line,
+    // rather than having to hit its small rendered shape exactly.
+    if (noteOnBeat) {
+      const nextSelection = new Set(selectedIds)
+      if (nextSelection.has(noteOnBeat.id)) nextSelection.delete(noteOnBeat.id)
+      else nextSelection.add(noteOnBeat.id)
+      onSelectionChange(nextSelection)
+      return
+    }
+
+    if (selectedIds.size) { onSelectionChange(new Set()); return }
+    if (tool === 'note') {
+      onNotesChange([...chart.notes, { id: uid(), lane, time, kind: 'note' }])
+    }
     else if (!holdStart) onHoldStart({ lane, time })
     else {
       const start = Math.min(holdStart.time, time)
@@ -400,11 +534,16 @@ function Editor({ chart, currentTime, subdivision, tool, holdStart, selectedIds,
     if (event.button !== 0) return
     event.stopPropagation()
     event.preventDefault()
+    if (tool === 'region') { onRegionLine(pointerTime(event.clientY)); return }
+    if (tool === 'paste') { onPasteLine(pointerTime(event.clientY)); return }
     if (tool === 'delete') { onNotesChange(chart.notes.filter(n => n.id !== id)); return }
 
+    const wasSelected = selectedIds.has(id)
     const nextSelection = new Set(selectedIds)
-    nextSelection.add(id)
-    onSelectionChange(nextSelection)
+    if (!wasSelected) {
+      nextSelection.add(id)
+      onSelectionChange(nextSelection)
+    }
 
     const startX = event.clientX
     const startY = event.clientY
@@ -412,8 +551,11 @@ function Editor({ chart, currentTime, subdivision, tool, holdStart, selectedIds,
     const selectedNotes = chart.notes.filter(note => nextSelection.has(note.id))
     const earliest = Math.min(...selectedNotes.map(note => note.time))
     const latest = Math.max(...selectedNotes.map(note => note.endTime ?? note.time))
+    let didDrag = false
 
     const move = (moveEvent: MouseEvent) => {
+      if (!didDrag && Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 3) return
+      didDrag = true
       const laneDelta = Math.round((moveEvent.clientX - startX) / (rect.width / 4))
       const requestedTimeDelta = Math.round((-(moveEvent.clientY - startY) / pps * 1000) / step) * step
       const timeDelta = clamp(requestedTimeDelta, -earliest, chart.duration - latest)
@@ -430,7 +572,12 @@ function Editor({ chart, currentTime, subdivision, tool, holdStart, selectedIds,
     }
     const up = () => {
       const preview = dragPreviewRef.current
-      if (Object.keys(preview).length) onNotesChange(chart.notes.map(note => preview[note.id] ? { ...note, ...preview[note.id] } : note))
+      if (didDrag && Object.keys(preview).length) onNotesChange(chart.notes.map(note => preview[note.id] ? { ...note, ...preview[note.id] } : note))
+      else if (wasSelected) {
+        const next = new Set(selectedIds)
+        next.delete(id)
+        onSelectionChange(next)
+      }
       dragPreviewRef.current = {}; setDragPreview({})
       window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up)
     }
@@ -502,15 +649,29 @@ function Editor({ chart, currentTime, subdivision, tool, holdStart, selectedIds,
     <section className="editor-stage">
       <div className="stage-caption"><span>OVERVIEW</span><span>4K TIMELINE · CTRL + WHEEL {Math.round(pps / 2.3)}%</span><span>{selectedIds.size ? `SELECTED ${selectedIds.size}` : isPlaying ? 'RECORDING INPUT' : `SNAP 1/${subdivision}`}</span></div>
       <div className="editor-body">
-        <div className="minimap" onClick={e => {
-          const rect = e.currentTarget.getBoundingClientRect(); onSeek((rect.bottom - e.clientY) / rect.height * chart.duration)
+        <div className="minimap" onMouseDown={event => {
+          event.preventDefault()
+          const minimap = event.currentTarget
+          const seekAtPointer = (clientY: number) => {
+            const rect = minimap.getBoundingClientRect()
+            onSeek((rect.bottom - clientY) / rect.height * chart.duration)
+          }
+          seekAtPointer(event.clientY)
+          const move = (moveEvent: MouseEvent) => seekAtPointer(moveEvent.clientY)
+          const up = () => {
+            window.removeEventListener('mousemove', move)
+            window.removeEventListener('mouseup', up)
+          }
+          window.addEventListener('mousemove', move)
+          window.addEventListener('mouseup', up)
         }}>
           <div className="minimap-beats" style={{ backgroundSize: `100% ${Math.max(.5, (60000 / chart.bpm) / chart.duration * 100)}%` }} />
           {chart.notes.map(n => <i key={n.id} style={{ bottom: `${n.time / chart.duration * 100}%`, left: `${10 + n.lane * 11}px`, height: n.kind === 'hold' ? `${Math.max(3, ((n.endTime! - n.time) / chart.duration) * 100)}%` : 2, background: LANE_COLORS[n.lane] }} />)}
           <div className="minimap-window" style={{ bottom: `${clamp(currentTime / chart.duration * 100, 0, 94)}%` }} />
         </div>
-        <div className="lane-editor" ref={laneRef}>
+        <div className={`lane-editor ${tool === 'region' || tool === 'paste' ? 'region-mode' : ''}`} ref={laneRef}>
           <div className="lane-header">{chart.settings.keys.map((k, i) => <div key={i}><span>{i + 1}</span><b>{k}</b></div>)}</div>
+          {region && <div className="region-overlay" style={{ top: headerHeight + yAt(region.end ?? region.start), height: Math.max(2, ((region.end ?? region.start) - region.start) / 1000 * pps) }} />}
           <div className="beat-layer">{lines.map(line => {
             const y = yAt(line.time)
             const position = ((line.index % subdivision) + subdivision) % subdivision
@@ -537,7 +698,7 @@ function SettingsModal({ chart, onChange, onClose }: { chart: Chart; onChange(ch
   const update = (patch: Partial<Chart['settings']>) => onChange({ ...chart, settings: { ...chart.settings, ...patch } })
   return <Dialog open onOpenChange={open => { if (!open) onClose() }}><DialogContent>
     <div className="modal-head"><div><span>PLAYSTYLE</span><h2>玩法设置</h2></div><IconButton label="关闭" onClick={onClose}><X /></IconButton></div>
-    <label className="setting-row"><span><b>轨道倾斜度</b><small>改变透视角度，不影响判定</small></span><div><Slider min="0" max="18" value={chart.settings.laneTilt} onValueChange={value => update({ laneTilt: value })} /><output>{chart.settings.laneTilt}°</output></div></label>
+    <label className="setting-row"><span><b>轨道倾斜度</b><small>改变透视角度，不影响判定</small></span><div><Slider min="0" max="45" value={chart.settings.laneTilt} onValueChange={value => update({ laneTilt: value })} /><output>{chart.settings.laneTilt}°</output></div></label>
     <label className="setting-row"><span><b>下落速度</b><small>试玩时音符的视觉速度</small></span><div><Slider min="4" max="12" step="0.5" value={chart.settings.scrollSpeed} onValueChange={value => update({ scrollSpeed: value })} /><output>{chart.settings.scrollSpeed}</output></div></label>
     <div className="setting-block"><span><b>判定宽松度</b><small>Perfect / Good / Miss 的时间窗口</small></span><div className="segmented">{(['strict', 'standard', 'relaxed'] as const).map((v, i) => <Button variant="ghost" key={v} className={chart.settings.timingWindow === v ? 'active' : ''} onClick={() => update({ timingWindow: v })}>{['严格', '标准', '宽松'][i]}</Button>)}</div></div>
     <div className="setting-block"><span><b>默认按键</b><small>点击输入框后按下新按键</small></span><div className="key-inputs">{chart.settings.keys.map((key, index) => <Input key={index} value={key} maxLength={1} onChange={e => { const keys = [...chart.settings.keys]; keys[index] = e.target.value.slice(-1).toUpperCase(); update({ keys }) }} />)}</div></div>
@@ -545,100 +706,253 @@ function SettingsModal({ chart, onChange, onClose }: { chart: Chart; onChange(ch
   </DialogContent></Dialog>
 }
 
-function Playtest({ chart, audio, audioUrl, onExit }: { chart: Chart; audio: HTMLAudioElement | null; audioUrl: string; onExit(): void }) {
-  const [time, setTime] = useState(0)
+function PlaytestStartDialog({ open, currentTime, onClose, onStart }: { open: boolean; currentTime: number; onClose(): void; onStart(time: number): void }) {
+  return <Dialog open={open} onOpenChange={next => { if (!next) onClose() }}><DialogContent className="playtest-start-dialog">
+    <div className="modal-head"><div><span>PLAYTEST START</span><h2>从哪里开始试玩？</h2></div><IconButton label="关闭" onClick={onClose}><X /></IconButton></div>
+    <p>选择起点后，轨道会先正常预滚动；第一个音符将从顶部完整下落，再进入音乐与判定。</p>
+    <div className="playtest-start-actions">
+      <Button variant="outline" className="playtest-start-option restart" onClick={() => onStart(0)}><span>从头开始</span><small>00:00.000</small></Button>
+      <Button className="playtest-start-option resume" onClick={() => onStart(currentTime)}><span>从当前进度开始</span><small>{formatTime(currentTime)}</small></Button>
+    </div>
+  </DialogContent></Dialog>
+}
+
+function Playtest({ chart, audio, audioUrl, initialTime, onExit }: { chart: Chart; audio: HTMLAudioElement | null; audioUrl: string; initialTime: number; onExit(): void }) {
+  const [time, setTime] = useState(initialTime)
   const [playing, setPlaying] = useState(false)
+  const [preparing, setPreparing] = useState(true)
+  const [runNonce, setRunNonce] = useState(0)
   const [pressed, setPressed] = useState<Set<number>>(new Set())
-  const [judged, setJudged] = useState<Record<string, 'Perfect' | 'Good' | 'Miss'>>({})
-  const [holdStarts, setHoldStarts] = useState<Record<string, 'Perfect' | 'Good' | 'Miss'>>({})
-  const [flash, setFlash] = useState<number[]>([])
-  const [lastJudge, setLastJudge] = useState('')
-  const [judgePulse, setJudgePulse] = useState(0)
+  const [judged, setJudged] = useState<Record<string, Judgment>>({})
+  const [holdStarts, setHoldStarts] = useState<Record<string, Judgment>>({})
+  const [hitEffects, setHitEffects] = useState<Array<{ id: number; lane: number; result: Judgment }>>([])
   const [combo, setCombo] = useState(0)
+  const [scoring, setScoring] = useState({ judgedTicks: 0, earnedHalfUnits: 0 })
   const raf = useRef(0)
+  const lanesRef = useRef<HTMLDivElement>(null)
+  const [lanesHeight, setLanesHeight] = useState(620)
   const timeRef = useRef(0)
   const playingRef = useRef(false)
   const pressedRef = useRef<Set<number>>(new Set())
+  const hitEffectId = useRef(0)
+  const hitEffectTimersRef = useRef<Record<number, number>>({})
+  const comboRef = useRef(0)
+  const missCursorRef = useRef(0)
+  const judgedRef = useRef(judged)
+  const holdTicksRef = useRef<Record<string, number>>({})
+  const droppedHoldsRef = useRef<Set<string>>(new Set())
   const windows = useMemo(() => chart.settings.timingWindow === 'strict' ? [55, 105, 145] : chart.settings.timingWindow === 'relaxed' ? [95, 180, 240] : [75, 140, 190], [chart.settings.timingWindow])
   const holdStartsRef = useRef(holdStarts)
+  const holdTickMs = 60000 / chart.bpm / 2
+  const notesByTime = useMemo(() => [...chart.notes].sort((a, b) => a.time - b.time), [chart.notes])
+  const noteById = useMemo(() => new Map(chart.notes.map(note => [note.id, note])), [chart.notes])
+  const notesByLane = useMemo(() => [0, 1, 2, 3].map(lane => chart.notes.filter(note => note.lane === lane).sort((a, b) => a.time - b.time)), [chart.notes])
+  const totalTicks = useMemo(() => chart.notes.reduce((sum, note) => sum + countNoteTicks(note, holdTickMs), 0), [chart.notes, holdTickMs])
+  const score = scoreFromUnits(scoring.earnedHalfUnits, totalTicks)
+  const accuracy = accuracyFromUnits(scoring.earnedHalfUnits, scoring.judgedTicks)
   const travelMs = 1400 * (7 / chart.settings.scrollSpeed)
-  const announceJudge = useCallback((result: string) => { setLastJudge(result); setJudgePulse(value => value + 1) }, [])
+  const judgmentLinePosition = 86
+  const emitHitFeedback = useCallback((lane: number, result: Judgment) => {
+    const id = ++hitEffectId.current
+    window.clearTimeout(hitEffectTimersRef.current[lane])
+    setHitEffects(effects => [...effects.filter(effect => effect.lane !== lane), { id, lane, result }])
+    hitEffectTimersRef.current[lane] = window.setTimeout(() => {
+      setHitEffects(effects => effects.filter(effect => effect.id !== id))
+      delete hitEffectTimersRef.current[lane]
+    }, 520)
+  }, [])
+  const registerJudgment = useCallback((lane: number, result: Judgment) => {
+    setScoring(value => ({ judgedTicks: value.judgedTicks + 1, earnedHalfUnits: value.earnedHalfUnits + judgmentUnits(result) }))
+    comboRef.current = result === 'Miss' ? 0 : comboRef.current + 1
+    setCombo(comboRef.current)
+    emitHitFeedback(lane, result)
+  }, [emitHitFeedback])
+
+  useEffect(() => () => Object.values(hitEffectTimersRef.current).forEach(window.clearTimeout), [])
 
   const animate = useCallback(() => {
     if (!audio) return
     const now = audio.currentTime * 1000
     timeRef.current = now; setTime(now)
-    setJudged(prev => {
-      let changed = false; const next = { ...prev }
-      chart.notes.forEach(n => {
-        if (next[n.id]) return
-        const startedAs = holdStartsRef.current[n.id]
-        if (n.kind === 'hold' && startedAs && now >= (n.endTime || n.time)) {
-          const result = pressedRef.current.has(n.lane) ? startedAs : 'Miss'
-          next[n.id] = result; changed = true
-          setCombo(c => result === 'Miss' ? 0 : c + 1); announceJudge(result)
-          setHoldStarts(starts => { const rest = { ...starts }; delete rest[n.id]; return rest })
-        } else if (!startedAs && now - n.time > windows[2]) {
-          next[n.id] = 'Miss'; changed = true; setCombo(0); announceJudge('Miss')
+    let nextJudged = judgedRef.current
+    let nextHoldStarts = holdStartsRef.current
+    let judgedChanged = false
+    let holdsChanged = false
+    const markJudged = (id: string, result: Judgment) => {
+      if (!judgedChanged) { nextJudged = { ...nextJudged }; judgedChanged = true }
+      nextJudged[id] = result
+    }
+    const startHold = (id: string, result: Judgment) => {
+      if (!holdsChanged) { nextHoldStarts = { ...nextHoldStarts }; holdsChanged = true }
+      nextHoldStarts[id] = result
+    }
+    const finishHold = (id: string) => {
+      if (!holdsChanged) { nextHoldStarts = { ...nextHoldStarts }; holdsChanged = true }
+      delete nextHoldStarts[id]
+    }
+    for (const id of Object.keys(holdStartsRef.current)) {
+      const note = noteById.get(id)
+      if (!note || nextJudged[id]) continue
+      const startedAs = nextHoldStarts[id]
+      const endTime = note.endTime || note.time
+      let nextTick = holdTicksRef.current[id] ?? note.time + holdTickMs
+      // Drop the last scheduled body tick so the visual tail never behaves like a release judgment.
+      while (nextTick <= now && nextTick + holdTickMs < endTime - .01) {
+        registerJudgment(note.lane, pressedRef.current.has(note.lane) && !droppedHoldsRef.current.has(id) ? 'Perfect' : 'Miss')
+        nextTick += holdTickMs
+      }
+      holdTicksRef.current[id] = nextTick
+      if (now >= endTime) {
+        markJudged(id, startedAs)
+        finishHold(id)
+        delete holdTicksRef.current[id]
+        droppedHoldsRef.current.delete(id)
+      }
+    }
+    let cursor = missCursorRef.current
+    while (cursor < notesByTime.length && now - notesByTime[cursor].time > windows[2]) {
+      const note = notesByTime[cursor++]
+      if (nextJudged[note.id] || nextHoldStarts[note.id]) continue
+      const endTime = note.endTime || note.time
+      registerJudgment(note.lane, 'Miss')
+      if (note.kind === 'hold') {
+        startHold(note.id, 'Miss')
+        let nextTick = note.time + holdTickMs
+        while (nextTick <= now && nextTick + holdTickMs < endTime - .01) {
+          registerJudgment(note.lane, 'Miss')
+          nextTick += holdTickMs
         }
-      })
-      return changed ? next : prev
-    })
+        holdTicksRef.current[note.id] = nextTick
+        if (!pressedRef.current.has(note.lane)) droppedHoldsRef.current.add(note.id)
+        if (now >= endTime) {
+          markJudged(note.id, 'Miss')
+          finishHold(note.id)
+          delete holdTicksRef.current[note.id]
+          droppedHoldsRef.current.delete(note.id)
+        }
+      } else {
+        markJudged(note.id, 'Miss')
+      }
+    }
+    missCursorRef.current = cursor
+    if (judgedChanged) { judgedRef.current = nextJudged; setJudged(nextJudged) }
+    if (holdsChanged) { holdStartsRef.current = nextHoldStarts; setHoldStarts(nextHoldStarts) }
     if (!audio.paused) raf.current = requestAnimationFrame(animate)
-  }, [announceJudge, audio, chart.notes, windows])
+  }, [audio, holdTickMs, noteById, notesByTime, registerJudgment, windows])
 
   const toggle = async () => {
+    if (preparing) return
     if (!audioUrl || !audio) return
     if (playingRef.current) { audio.pause(); cancelAnimationFrame(raf.current); playingRef.current = false; setPlaying(false) }
     else {
-      if (audio.ended) { audio.currentTime = 0; setJudged({}); setHoldStarts({}); holdStartsRef.current = {}; setCombo(0); setLastJudge(''); setTime(0); timeRef.current = 0 }
+      if (audio.ended) { audio.currentTime = 0; setJudged({}); judgedRef.current = {}; setHoldStarts({}); holdStartsRef.current = {}; holdTicksRef.current = {}; missCursorRef.current = 0; droppedHoldsRef.current.clear(); setHitEffects([]); comboRef.current = 0; setCombo(0); setScoring({ judgedTicks: 0, earnedHalfUnits: 0 }); setTime(0); timeRef.current = 0 }
       audio.playbackRate = 1; await audio.play(); playingRef.current = true; setPlaying(true); raf.current = requestAnimationFrame(animate)
     }
   }
 
   const restart = async () => {
+    if (preparing) return
     if (!audioUrl || !audio) return
-    audio.pause(); cancelAnimationFrame(raf.current); audio.currentTime = 0
-    setJudged({}); setHoldStarts({}); holdStartsRef.current = {}; setPressed(new Set()); pressedRef.current = new Set()
-    setCombo(0); setLastJudge(''); setTime(0); timeRef.current = 0
-    audio.playbackRate = 1
-    await audio.play(); playingRef.current = true; setPlaying(true); raf.current = requestAnimationFrame(animate)
+    audio.pause(); cancelAnimationFrame(raf.current); playingRef.current = false; setPlaying(false)
+    setRunNonce(value => value + 1)
   }
 
   const hit = useCallback((lane: number) => {
+    if (preparing) return
     const now = timeRef.current
-    const candidate = chart.notes.filter(n => n.lane === lane && !judged[n.id] && !holdStarts[n.id]).sort((a, b) => Math.abs(a.time - now) - Math.abs(b.time - now))[0]
+    const reconnecting = chart.notes.find(note => note.kind === 'hold' && note.lane === lane && holdStartsRef.current[note.id] && !judgedRef.current[note.id] && now < (note.endTime || note.time) && droppedHoldsRef.current.has(note.id))
+    if (reconnecting) {
+      droppedHoldsRef.current.delete(reconnecting.id)
+      return
+    }
+    let candidate: ChartNote | undefined
+    let closest = Infinity
+    const laneNotes = notesByLane[lane]
+    let low = 0; let high = laneNotes.length
+    while (low < high) {
+      const middle = (low + high) >>> 1
+      if (laneNotes[middle].time < now - windows[2]) low = middle + 1
+      else high = middle
+    }
+    for (let index = low; index < laneNotes.length; index++) {
+      const note = laneNotes[index]
+      if (note.time > now + windows[2]) break
+      if (judgedRef.current[note.id] || holdStartsRef.current[note.id]) continue
+      const distance = Math.abs(note.time - now)
+      if (distance < closest) { candidate = note; closest = distance }
+    }
     if (!candidate) return
     const delta = Math.abs(candidate.time - now)
     if (delta > windows[2]) return
-    const result: 'Perfect' | 'Good' | 'Miss' = delta <= windows[0] ? 'Perfect' : delta <= windows[1] ? 'Good' : 'Miss'
-    if (candidate.kind === 'hold' && result !== 'Miss') setHoldStarts(prev => ({ ...prev, [candidate.id]: result }))
-    else {
-      setJudged(prev => ({ ...prev, [candidate.id]: result }))
-      setCombo(c => result === 'Miss' ? 0 : c + 1)
+    const result: Judgment = delta <= windows[0] ? 'Perfect' : delta <= windows[1] ? 'Good' : 'Miss'
+    if (candidate.kind === 'hold') {
+      const nextStarts = { ...holdStartsRef.current, [candidate.id]: result }
+      holdStartsRef.current = nextStarts; setHoldStarts(nextStarts)
+      holdTicksRef.current[candidate.id] = candidate.time + holdTickMs
+      droppedHoldsRef.current.delete(candidate.id)
+    } else {
+      const nextJudged = { ...judgedRef.current, [candidate.id]: result }
+      judgedRef.current = nextJudged; setJudged(nextJudged)
     }
-    announceJudge(result)
-    setFlash(f => [...f, lane]); window.setTimeout(() => setFlash(f => f.filter(x => x !== lane)), 120)
-  }, [announceJudge, chart.notes, judged, holdStarts, windows])
+    registerJudgment(lane, result)
+  }, [chart.notes, holdTickMs, notesByLane, preparing, registerJudgment, windows])
 
   const releaseHold = useCallback((lane: number) => {
-    const active = chart.notes.find(n => n.kind === 'hold' && n.lane === lane && holdStarts[n.id] && !judged[n.id])
+    const active = chart.notes.find(n => n.kind === 'hold' && n.lane === lane && holdStartsRef.current[n.id] && !judgedRef.current[n.id] && timeRef.current < (n.endTime || n.time))
     if (!active) return
-    const delta = Math.abs((active.endTime || active.time) - timeRef.current)
-    const result: 'Perfect' | 'Good' | 'Miss' = delta <= windows[0] ? holdStarts[active.id] : delta <= windows[1] ? 'Good' : 'Miss'
-    setJudged(prev => ({ ...prev, [active.id]: result }))
-    setHoldStarts(prev => { const next = { ...prev }; delete next[active.id]; return next })
-    announceJudge(result); setCombo(c => result === 'Miss' ? 0 : c + 1)
-  }, [announceJudge, chart.notes, holdStarts, judged, windows])
+    droppedHoldsRef.current.add(active.id)
+  }, [chart.notes])
 
   useEffect(() => { holdStartsRef.current = holdStarts }, [holdStarts])
+  useEffect(() => { judgedRef.current = judged }, [judged])
+
+  useEffect(() => {
+    HIT_EFFECT_TEXTURES.forEach(source => {
+      const texture = new Image()
+      texture.src = source
+      void texture.decode?.().catch(() => undefined)
+    })
+  }, [])
 
   useEffect(() => {
     if (!audio) return
-    audio.currentTime = 0; timeRef.current = 0
-    playingRef.current = false; setPlaying(false); setTime(0)
+    const startTime = clamp(initialTime, 0, chart.duration)
+    const visualStartTime = startTime - travelMs
+    audio.pause(); audio.currentTime = startTime / 1000
+    const skippedNotes = chart.notes.filter(note => note.time < startTime)
+    const skipped = Object.fromEntries(skippedNotes.map(note => [note.id, 'Miss' as const]))
+    const skippedTicks = skippedNotes.reduce((sum, note) => sum + countNoteTicks(note, holdTickMs), 0)
+    judgedRef.current = skipped; setJudged(skipped)
+    holdStartsRef.current = {}; setHoldStarts({}); holdTicksRef.current = {}; missCursorRef.current = 0; droppedHoldsRef.current.clear()
+    setHitEffects([]); setPressed(new Set()); pressedRef.current = new Set(); comboRef.current = 0; setCombo(0); setScoring({ judgedTicks: skippedTicks, earnedHalfUnits: 0 })
+    timeRef.current = visualStartTime; playingRef.current = false; setPlaying(false); setTime(visualStartTime); setPreparing(true)
+    const preRollStartedAt = performance.now()
+    const preRoll = () => {
+      const elapsed = performance.now() - preRollStartedAt
+      if (elapsed < travelMs) {
+        const visualTime = visualStartTime + elapsed
+        timeRef.current = visualTime; setTime(visualTime)
+        raf.current = requestAnimationFrame(preRoll)
+        return
+      }
+      timeRef.current = startTime; setTime(startTime); setPreparing(false)
+      void audio.play().then(() => {
+        playingRef.current = true; setPlaying(true); raf.current = requestAnimationFrame(animate)
+      }).catch(() => setPlaying(false))
+    }
+    raf.current = requestAnimationFrame(preRoll)
     return () => { audio.pause(); cancelAnimationFrame(raf.current) }
-  }, [audio])
+  }, [animate, audio, chart.duration, chart.notes, holdTickMs, initialTime, runNonce, travelMs])
+
+  useEffect(() => {
+    const lanes = lanesRef.current
+    if (!lanes) return
+    const updateHeight = () => setLanesHeight(lanes.clientHeight)
+    updateHeight()
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(lanes)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     if (!audio) return
@@ -655,26 +969,103 @@ function Playtest({ chart, audio, audioUrl, onExit }: { chart: Chart; audio: HTM
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); audio.removeEventListener('ended', ended) }
   }, [audio, chart.duration, chart.settings.keys, hit, releaseHold])
 
-  const visible = chart.notes.filter(n => !judged[n.id] && ((holdStarts[n.id] && (n.endTime || n.time) >= time) || (n.time >= time - 250 && n.time <= time + travelMs)))
+  const visible: ChartNote[] = []
+  for (const id of Object.keys(holdStarts)) {
+    const note = noteById.get(id)
+    if (note && !judged[id] && (note.endTime || note.time) >= time) visible.push(note)
+  }
+  let low = 0; let high = notesByTime.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (notesByTime[middle].time < time - 250) low = middle + 1
+    else high = middle
+  }
+  for (let index = low; index < notesByTime.length; index++) {
+    const note = notesByTime[index]
+    if (note.time > time + travelMs) break
+    if (!judged[note.id] && !holdStarts[note.id]) visible.push(note)
+  }
+  const activeHoldLanes = new Set(Object.keys(holdStarts).flatMap(id => {
+    const note = noteById.get(id)
+    return note && pressed.has(note.lane) && !droppedHoldsRef.current.has(id) ? [note.lane] : []
+  }))
+  const tiltStrength = clamp(chart.settings.laneTilt / 45, 0, 1)
+  const trackTopScale = 1 - tiltStrength * .82
+  const scaleAt = (y: number) => trackTopScale + (1 - trackTopScale) * clamp(y / judgmentLinePosition, 0, 1)
+  const projectX = (x: number, y: number) => 50 + (x - 50) * scaleAt(y)
+  const visualCurve = -Math.log(trackTopScale)
+  const curveRange = Math.expm1(visualCurve)
+  const startSlope = visualCurve > 0 ? visualCurve / curveRange : 1
+  const endSlope = visualCurve > 0 ? visualCurve * Math.exp(visualCurve) / curveRange : 1
+  const visualYAt = (eventTime: number) => {
+    const progress = 1 - (eventTime - time) / travelMs
+    const eased = progress < 0 ? progress * startSlope
+      : progress > 1 ? 1 + (progress - 1) * endSlope
+      : visualCurve > 0 ? Math.expm1(visualCurve * progress) / curveRange
+      : progress
+    return eased * judgmentLinePosition
+  }
+  const beatMs = 60000 / chart.bpm
+  const firstBeat = Math.ceil((time - travelMs * (100 / judgmentLinePosition - 1) - chart.offset) / beatMs)
+  const lastBeat = Math.floor((time + travelMs - chart.offset) / beatMs)
+  const beats = Array.from({ length: Math.max(0, lastBeat - firstBeat + 1) }, (_, index) => {
+    const beatTime = chart.offset + (firstBeat + index) * beatMs
+    return { index: firstBeat + index, y: visualYAt(beatTime), time: beatTime }
+  }).filter(beat => beat.time >= 0)
+  const lanePoints = (lane: number) => {
+    const left = lane * 25
+    const right = left + 25
+    return `${projectX(left, 0)},0 ${projectX(right, 0)},0 ${right},${judgmentLinePosition} ${right},100 ${left},100 ${left},${judgmentLinePosition}`
+  }
+  const laneGlowPath = (lane: number) => {
+    const left = lane * 25
+    const right = left + 25
+    const middle = left + 12.5
+    return `M ${left} 100 L ${right} 100 L ${right} ${judgmentLinePosition} C ${projectX(right, 62)} 62 ${projectX(middle + 4.5, 27)} 27 ${projectX(middle, 13)} 13 C ${projectX(middle - 4.5, 27)} 27 ${projectX(left, 62)} 62 ${left} ${judgmentLinePosition} Z`
+  }
+  const notePoints = (lane: number, topY: number, bottomY: number) => {
+    const left = lane * 25 + 2
+    const right = lane * 25 + 23
+    return `${projectX(left, topY)},${topY} ${projectX(right, topY)},${topY} ${projectX(right, bottomY)},${bottomY} ${projectX(left, bottomY)},${bottomY}`
+  }
   return <div className="playtest">
     <header className="play-head"><Button variant="outline" onClick={onExit}><ArrowLeft size={18} />返回编辑器</Button><div><b>{chart.title}</b><span>{chart.artist || 'MOONWEAVE PLAYTEST'}</span></div><div className="play-actions"><IconButton label="重新开始" onClick={restart}><RotateCcw size={17} /></IconButton><Button variant="outline" size="icon" aria-label={playing ? '暂停' : '继续'} onClick={toggle}>{playing ? <Pause /> : <Play />}</Button></div></header>
     <div className="game-area">
-      <div className="game-stats"><span>SCORE</span><b>{Object.values(judged).filter(v => v !== 'Miss').length.toString().padStart(7, '0')}</b></div>
-      <div className="game-lanes" style={{ transform: `perspective(850px) rotateX(${chart.settings.laneTilt}deg)` }}>
-        <div className="game-beat-grid" style={{ '--beat-size': `${Math.max(60, (60000 / chart.bpm) / travelMs * 620)}px`, '--beat-offset': `${time / travelMs * 620}px` } as React.CSSProperties} />
-        {[0, 1, 2, 3].map(lane => <div key={lane} className={`game-lane lane-${lane} ${pressed.has(lane) ? 'pressed' : ''} ${Object.keys(holdStarts).some(id => chart.notes.some(note => note.id === id && note.lane === lane)) ? 'holding' : ''} ${flash.includes(lane) ? 'hit-flash' : ''}`}><div className="key-cap">{chart.settings.keys[lane]}</div></div>)}
-        {visible.map(note => {
-          const progress = 1 - (note.time - time) / travelMs
-          const top = (note.kind === 'hold' ? 1 - ((note.endTime || note.time) - time) / travelMs : progress) * 86
-          const holdBottom = holdStarts[note.id] ? 86 : progress * 86
-          const holdHeight = note.kind === 'hold' ? Math.max(1.8, holdBottom - top) : 0
-          return <div key={note.id} className={`game-note ${note.kind} ${holdStarts[note.id] ? 'active-hold' : ''}`} style={{ left: `${note.lane * 25 + 2}%`, top: `${top}%`, height: note.kind === 'hold' ? `${holdHeight}%` : 18, '--lane': LANE_COLORS[note.lane] } as React.CSSProperties}><i /></div>
-        })}
-        <div className="game-judgment-line" />
+      <div className="game-stats"><div><span>SCORE</span><b>{score.toString().padStart(8, '0')}</b></div><div><span>ACCURACY</span><b>{accuracy.toFixed(2)}%</b></div></div>
+      <div className="game-lanes" ref={lanesRef}>
+        <svg className="game-track" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="lane-glow-cyan" x1="0" y1="13" x2="0" y2="100" gradientUnits="userSpaceOnUse"><stop offset="0" stopColor="#31d7ff" stopOpacity="0" /><stop offset=".42" stopColor="#31d7ff" stopOpacity=".05" /><stop offset=".74" stopColor="#31d7ff" stopOpacity=".34" /><stop offset="1" stopColor="#b7f4ff" stopOpacity=".9" /></linearGradient>
+            <linearGradient id="lane-glow-violet" x1="0" y1="13" x2="0" y2="100" gradientUnits="userSpaceOnUse"><stop offset="0" stopColor="#b788ff" stopOpacity="0" /><stop offset=".42" stopColor="#b788ff" stopOpacity=".05" /><stop offset=".74" stopColor="#b788ff" stopOpacity=".34" /><stop offset="1" stopColor="#f0e5ff" stopOpacity=".9" /></linearGradient>
+            <filter id="lane-glow-blur" x="-18%" y="-10%" width="136%" height="120%"><feGaussianBlur stdDeviation="1.15" /></filter>
+          </defs>
+          {[0, 1, 2, 3].map(lane => <polygon key={lane} points={lanePoints(lane)} vectorEffect="non-scaling-stroke" className={`game-track-lane lane-${lane} ${pressed.has(lane) ? 'pressed' : ''}`} />)}
+          {[0, 1, 2, 3].filter(lane => pressed.has(lane)).map(lane => {
+            const color = lane === 0 || lane === 3 ? 'cyan' : 'violet'
+            return <path key={`glow-${lane}`} className="game-lane-glow" d={laneGlowPath(lane)} fill={`url(#lane-glow-${color})`} />
+          })}
+          {beats.map(beat => <line key={beat.index} className="game-beat-line" x1={projectX(0, beat.y)} x2={projectX(100, beat.y)} y1={beat.y} y2={beat.y} vectorEffect="non-scaling-stroke" />)}
+        </svg>
+        <svg className="game-notes" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          {visible.map(note => {
+            const headY = visualYAt(note.time)
+            const bottom = note.kind === 'hold' ? Math.min(headY, judgmentLinePosition) : headY
+            if (note.kind === 'hold' && bottom <= 0) return null
+            const top = note.kind === 'hold'
+              ? Math.max(0, visualYAt(note.endTime || note.time))
+              : bottom - (18 / Math.max(1, lanesHeight) * 100) * (1 - tiltStrength * .3)
+            return <polygon key={note.id} points={notePoints(note.lane, top, bottom)} vectorEffect="non-scaling-stroke" className={`game-note-shape ${note.kind} ${holdStarts[note.id] ? 'active-hold' : ''}`} style={{ '--lane': LANE_COLORS[note.lane] } as React.CSSProperties} />
+          })}
+        </svg>
+        <div className="game-judgment-line" style={{ top: `${judgmentLinePosition}%` }} />
+        {[0, 1, 2, 3].map(lane => <div key={lane} className="key-cap" style={{ left: `${projectX(lane * 25 + 12.5, 97.5)}%` }}>{chart.settings.keys[lane]}</div>)}
+        {[...activeHoldLanes].map(lane => <i key={lane} className={`hold-effect ${lane === 0 || lane === 3 ? 'light' : 'conflict'}`} style={{ left: `${projectX(lane * 25 + 12.5, judgmentLinePosition)}%`, top: `${judgmentLinePosition}%` }} />)}
+        {hitEffects.map(effect => <div key={effect.id} className={`hit-effect ${effect.result.toLowerCase()} ${effect.lane === 0 || effect.lane === 3 ? 'light' : 'conflict'}`} style={{ left: `${projectX(effect.lane * 25 + 12.5, judgmentLinePosition)}%`, top: `${judgmentLinePosition}%` }}><i className="hit-sprite" /></div>)}
+        {hitEffects.map(effect => <div key={`judge-${effect.id}`} className={`judge-text ${effect.result.toLowerCase()}`} style={{ left: `${projectX(effect.lane * 25 + 12.5, judgmentLinePosition)}%`, top: `${judgmentLinePosition}%` }}>{effect.result}</div>)}
       </div>
-      {lastJudge && <div key={judgePulse} className={`judge-text ${lastJudge.toLowerCase()}`}>{lastJudge}<span>{combo > 1 ? `${combo} COMBO` : ''}</span></div>}
-      {!playing && <Button variant="outline" className="game-pause" onClick={toggle}><Play fill="currentColor" /><b>{time > 0 ? '继续' : '开始试玩'}</b><span>SPACE</span></Button>}
-      <div className="game-progress"><i style={{ width: `${time / chart.duration * 100}%` }} /></div>
+      {combo > 0 && <div key={combo} className="game-combo"><b>{combo}</b><span>COMBO</span></div>}
+      {preparing ? <div className="playtest-countdown" aria-live="polite"><span>准备中</span><b>READY</b><small>轨道运行中</small></div> : !playing && <Button variant="outline" className="game-pause" onClick={toggle}><Play fill="currentColor" /><b>{time > 0 ? '继续' : '开始试玩'}</b><span>SPACE</span></Button>}
+      <div className="game-progress"><i style={{ width: `${clamp(time / chart.duration * 100, 0, 100)}%` }} /></div>
     </div>
   </div>
 }

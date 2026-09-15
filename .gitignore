@@ -2,6 +2,7 @@ node_modules/
 dist/
 .playwright-cli/
 output/
+release/
+release-win/
 *.log
 .DS_Store
-

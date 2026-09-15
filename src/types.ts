@@ -1,5 +1,5 @@
 export type NoteKind = 'note' | 'hold'
-export type ToolMode = NoteKind | 'delete'
+export type ToolMode = NoteKind | 'delete' | 'region' | 'paste'
 
 export interface ChartNote {
   id: string
@@ -33,7 +33,10 @@ export interface Chart {
 export interface ElectronBridge {
   chooseAudio(): Promise<{ path: string; url: string; name: string } | null>
   saveChart(payload: { title: string; currentPath: string; chart: Chart }): Promise<string | null>
-  loadChart(): Promise<{ path: string; chart: Chart } | null>
+  loadChart(): Promise<{ path: string; chart: Chart; audioAvailable: boolean } | null>
+  minimizeWindow(): void
+  toggleMaximizeWindow(): void
+  closeWindow(): void
 }
 
 declare global { interface Window { moonweave?: ElectronBridge } }

@@ -16,7 +16,7 @@ function createWindow() {
     minWidth: 1120,
     minHeight: 720,
     backgroundColor: '#090b13',
-    titleBarStyle: 'hiddenInset',
+    frame: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -31,7 +31,12 @@ function createWindow() {
 app.whenReady().then(() => {
   protocol.handle('moon-audio', request => {
     const filePath = decodeURIComponent(new URL(request.url).pathname.slice(1))
-    const bytes = fs.readFileSync(filePath)
+    let bytes
+    try {
+      bytes = fs.readFileSync(filePath)
+    } catch {
+      return new Response('Audio file not found', { status: 404, headers: { 'Content-Type': 'text/plain' } })
+    }
     const size = bytes.length
     const extension = path.extname(filePath).toLowerCase()
     const contentType = ({ '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac' })[extension] || 'application/octet-stream'
@@ -85,5 +90,19 @@ ipcMain.handle('chart:load', async () => {
   })
   if (result.canceled) return null
   const filePath = result.filePaths[0]
-  return { path: filePath, chart: JSON.parse(fs.readFileSync(filePath, 'utf8')) }
+  const chart = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+  const audioPath = typeof chart.audioPath === 'string' ? chart.audioPath : ''
+  // Charts deliberately store only an absolute local-file reference, never audio bytes.
+  // Check it here so the renderer never tries to stream a file that no longer exists.
+  let audioAvailable = false
+  try { audioAvailable = Boolean(audioPath && fs.statSync(audioPath).isFile()) } catch { /* The referenced file is missing or inaccessible. */ }
+  return { path: filePath, chart, audioAvailable }
 })
+
+ipcMain.on('window:minimize', () => mainWindow?.minimize())
+ipcMain.on('window:toggle-maximize', () => {
+  if (!mainWindow) return
+  if (mainWindow.isMaximized()) mainWindow.unmaximize()
+  else mainWindow.maximize()
+})
+ipcMain.on('window:close', () => mainWindow?.close())
